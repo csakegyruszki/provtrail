@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:provtrail:schema:record:v1",
+  "title": "provtrail record v1",
+  "description": "One hash-chained record in a provtrail ledger. A record is valid iff captured_at is a parseable RFC3339 UTC timestamp AND (source_url is a non-empty string OR content_hash is a non-empty sha256:<64 hex> string).",
+  "type": "object",
+  "required": ["schema", "seq", "id", "captured_at", "kind", "prev_hash", "record_hash"],
+  "properties": {
+    "schema": {
+      "const": "provtrail/v1",
+      "description": "Explicit schema identifier. Never infer the record format from its keys."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1-based sequence number, contiguous per ledger."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^ev_[0-9a-f]{16}$",
+      "description": "\"ev_\" followed by the first 16 hex characters of record_hash's digest."
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 UTC timestamp when the source was captured. Required."
+    },
+    "source_url": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The captured source's URL."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 hash of the captured content, as sha256:<64 hex>."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["url", "search", "scrape", "file", "manual"],
+      "default": "url",
+      "description": "The kind of capture."
+    },
+    "tool": {
+      "type": "string",
+      "description": "Which backend captured this record, e.g. web-search:api, browser:manual."
+    },
+    "query": { "type": "string", "description": "Search query, if this record came from a search." },
+    "title": { "type": "string", "description": "Title of the source." },
+    "claim": { "type": "string", "description": "The claim this source is evidence for." },
+    "snippet": { "type": "string", "description": "Short supporting excerpt from the source." },
+    "archived_url": { "type": "string", "description": "URL of an archived copy of the source." },
+    "path": {
+      "type": "string",
+      "description": "Artifact path, relative to the ledger's directory. Absolute paths and paths leaving the directory are invalid (checked by provtrail verify)."
+    },
+    "session_id": { "type": "string", "description": "Identifier of the capturing session." },
+    "extra": { "type": "object", "description": "Free-form additional metadata." },
+    "prev_hash": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "record_hash of the previous record in the ledger, or null for seq 1."
+    },
+    "record_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 of the canonical JSON of this record without the record_hash (and id) keys."
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    { "required": ["source_url"], "properties": { "source_url": { "minLength": 1 } } },
+    { "required": ["content_hash"], "properties": { "content_hash": { "pattern": "^sha256:[0-9a-f]{64}$" } } }
+  ]
+}

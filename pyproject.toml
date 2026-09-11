@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "provtrail"
+version = "0.1.0"
+description = "Append-only, hash-chained ledger for recording the sources used in LLM-assisted research."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "provtrail contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+provtrail = "provtrail.cli:main"
+provtrail-stop-hook = "provtrail.stop_hook:main"
+provtrail-mcp = "provtrail.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
