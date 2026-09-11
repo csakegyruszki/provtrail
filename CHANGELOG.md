@@ -2,7 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-09-11
+
+### Changed
+- Documentation: Claude Code passes `CLAUDE_CODE_SESSION_ID` to stdio
+  MCP server processes as well as to Bash tool subprocesses (measured),
+  so records written through `provtrail-mcp` match the Stop hook's
+  session check without an explicit `session_id`. The README and the
+  MCP server docstring previously described this as unverified.
+
+## [0.1.0] - 2026-09-11
 
 ### Added
 - Hash-chained JSONL ledger: `Ledger.add`, `Ledger.records`,
