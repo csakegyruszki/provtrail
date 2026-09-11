@@ -13,13 +13,10 @@ its own working directory and the ``PROVTRAIL_LEDGER`` / config file
 (``.provtrail.json``). Start this process from the project directory
 (or set ``PROVTRAIL_LEDGER``) for it to find the right ledger.
 
-Whether Claude Code passes ``CLAUDE_CODE_SESSION_ID`` to an MCP server
-process is not verified (it is verified for Bash tool subprocesses).
-``provtrail_add`` falls back to that environment variable for
-``session_id`` when the caller does not supply one, but if the Stop
-hook's session matching needs to line up with what this tool records,
-pass ``session_id`` explicitly with the value from the current
-conversation rather than relying on the fallback.
+Claude Code sets ``CLAUDE_CODE_SESSION_ID`` to the current session's ID
+for stdio MCP server processes, as it does for Bash tool subprocesses.
+``provtrail_add`` uses that value for ``session_id`` when the caller does
+not supply one, so its records match the Stop hook's session check.
 """
 
 from __future__ import annotations

@@ -256,10 +256,10 @@ inside that directory; it is rejected otherwise. The file is hashed
 from its raw bytes, and its path relative to the ledger is stored in
 `path`, so `provtrail verify --check-files` can re-hash it. `session_id` falls
 back to the `CLAUDE_CODE_SESSION_ID` environment variable when not
-supplied, but whether Claude Code actually sets that variable for an
-MCP server process is not verified (it is verified for Bash tool
-subprocesses), so pass `session_id` explicitly if session matching
-against the Stop hook matters for your workflow.
+supplied. Claude Code sets that variable, with the current session's
+ID, for both Bash tool subprocesses and stdio MCP server processes, so
+records written through either path match the Stop hook's session
+check without passing `session_id` explicitly.
 
 ## Security model and limitations
 
