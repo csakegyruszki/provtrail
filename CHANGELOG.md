@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.2] - 2026-09-11
+
+### Changed
+- Package metadata: project URLs (repository, issues, changelog), so the
+  PyPI page links to the source repository. No code changes.
+
 ## [0.1.1] - 2026-09-11
 
 ### Changed
