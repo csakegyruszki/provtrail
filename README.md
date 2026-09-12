@@ -40,6 +40,9 @@ provtrail check ./ledger.jsonl --session-id abc123
 # print the last record's seq:record_hash
 provtrail head ./ledger.jsonl
 
+# print the installed version
+provtrail --version
+
 # verify against one or more previously recorded anchors
 provtrail verify ./ledger.jsonl --expect 42:sha256:<64-hex-digest>
 provtrail verify ./ledger.jsonl --expect-file ./anchors.txt
@@ -122,9 +125,12 @@ expect=[(seq, record_hash), ...])` checks the same anchors and folds `ANCHOR_MIS
 
 The ledger establishes:
 
-- that each record is unchanged since it was appended, and that records have not been edited,
-  reordered or removed in the middle of the file (`provtrail verify` recomputes every hash and
-  walks the `prev_hash` chain);
+- that the existing chain has not been edited, reordered or truncated in the middle by an
+  accidental or partial change: `provtrail verify` recomputes every hash and walks the
+  `prev_hash` chain, so a record changed without re-hashing everything after it is detected.
+  Someone who can rewrite the affected record and every later one, recomputing their hashes,
+  can produce another internally valid ledger. Detecting that requires an external anchor
+  (see "Anchoring");
 - that, for a record with a `content_hash`, the referenced bytes are the ones that were hashed
   (`verify --check-files` re-hashes files stored under the ledger's directory).
 
@@ -355,8 +361,12 @@ adversarial filesystem.
   176.8 ms, p95 = 205.5 ms, and `verify` takes 0.18 s. This is fine for research sessions of
   hundreds or thousands of records, not for very large ledgers.
 - **Advisory locking.** `<ledger>.lock` serialises concurrent `add` calls on one machine. It does
-  not stop a process that ignores it, is not reliable on network file systems, and a lock left by
-  a crashed process must be removed by hand.
+  not stop a process that ignores it and is not reliable on network file systems. The lock file
+  records an ownership token, the owner's PID and the acquisition time; a process removes the
+  lock on release only if it still holds its own token. This reduces, but does not eliminate,
+  the race that follows when a lock is deleted while its owner is still running. A lock left by
+  a crashed process is not cleared automatically: remove it manually only after confirming that
+  no process with the recorded PID is still running `provtrail`.
 - **Canonical JSON is Python's.** The hash input is Python's `json.dumps` output as specified
   above, not RFC 8785 (JCS). A verifier in another language must reproduce it exactly; see
   `tests/vectors/canonical_v1.json` for worked input/output pairs covering ASCII, non-ASCII,

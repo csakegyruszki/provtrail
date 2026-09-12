@@ -612,3 +612,116 @@ class TestExtraIsPlainJson(TempLedgerTestCase):
     def test_none_value_is_accepted(self):
         rec = Ledger(self.ledger_path).add(source_url="https://example.com/a", extra={"a": None})
         self.assertEqual({"a": None}, rec["extra"])
+
+
+class TestLockOwnership(TempLedgerTestCase):
+    """0.2.4: a release removes the lock file only while it still holds this acquisition's token."""
+
+    def _read(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_release_does_not_delete_a_lock_taken_over_by_another_holder(self):
+        # A holds the lock; the file is removed externally (e.g. by hand, as a "stale" lock);
+        # B acquires the same path; A's release must leave B's lock alone.
+        a, b = Ledger(self.ledger_path), Ledger(self.ledger_path)
+        lock_path = a._acquire_lock(timeout=1)
+        os.remove(lock_path)
+        self.assertEqual(lock_path, b._acquire_lock(timeout=1))
+        b_content = self._read(lock_path)
+        a._release_lock(lock_path)
+        self.assertTrue(os.path.isfile(lock_path), "A's release deleted B's lock")
+        self.assertEqual(b_content, self._read(lock_path))
+        b._release_lock(lock_path)
+        self.assertFalse(os.path.isfile(lock_path))
+
+    def test_release_does_not_delete_a_lock_with_foreign_content(self):
+        led = Ledger(self.ledger_path)
+        lock_path = led._acquire_lock(timeout=1)
+        with open(lock_path, "w", encoding="utf-8") as f:
+            f.write("99999")
+        led._release_lock(lock_path)
+        self.assertTrue(os.path.isfile(lock_path))
+        self.assertEqual("99999", self._read(lock_path))
+        os.remove(lock_path)
+
+    def test_lock_file_records_token_pid_and_time(self):
+        led = Ledger(self.ledger_path)
+        lock_path = led._acquire_lock(timeout=1)
+        try:
+            data = json.loads(self._read(lock_path))
+            self.assertIsInstance(data, dict)
+            self.assertRegex(data.get("token", ""), r"^[0-9a-f]{32}$")
+            self.assertEqual(os.getpid(), data.get("pid"))
+            self.assertRegex(data.get("acquired_at", ""), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+        finally:
+            led._release_lock(lock_path)
+
+    def test_two_acquisitions_get_different_tokens(self):
+        led = Ledger(self.ledger_path)
+        tokens = []
+        for _ in range(2):
+            lock_path = led._acquire_lock(timeout=1)
+            data = json.loads(self._read(lock_path))
+            led._release_lock(lock_path)
+            self.assertIsInstance(data, dict)
+            tokens.append(data.get("token"))
+        self.assertNotEqual(tokens[0], tokens[1])
+
+    def test_release_of_a_missing_lock_is_silent(self):
+        led = Ledger(self.ledger_path)
+        lock_path = led._acquire_lock(timeout=1)
+        os.remove(lock_path)
+        led._release_lock(lock_path)  # must not raise
+        self.assertFalse(os.path.isfile(lock_path))
+
+    def test_concurrent_adds_produce_one_valid_chain(self):
+        import threading
+
+        errors = []
+
+        def worker(n):
+            try:
+                led = Ledger(self.ledger_path)
+                for i in range(5):
+                    led.add(source_url=f"https://example.com/{n}/{i}", lock_timeout=30)
+            except Exception as e:  # pragma: no cover - reported below
+                errors.append(repr(e))
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual([], errors)
+        report = Ledger(self.ledger_path).verify()
+        self.assertTrue(report.ok, report.violations)
+        with open(self.ledger_path, "r", encoding="utf-8") as f:
+            self.assertEqual(20, sum(1 for _ in f))
+        self.assertFalse(os.path.isfile(self.ledger_path + ".lock"))
+
+
+class TestLockReleaseWithoutOwnership(TempLedgerTestCase):
+    """A release by an instance that does not currently hold the lock must never delete it."""
+
+    def test_second_release_after_takeover_leaves_new_holders_lock(self):
+        a, b = Ledger(self.ledger_path), Ledger(self.ledger_path)
+        lock_path = a._acquire_lock(timeout=1)
+        a._release_lock(lock_path)
+        self.assertEqual(lock_path, b._acquire_lock(timeout=1))
+        with open(lock_path, "r", encoding="utf-8") as f:
+            b_content = f.read()
+        a._release_lock(lock_path)  # stale second release by A
+        self.assertTrue(os.path.isfile(lock_path), "A's second release deleted B's lock")
+        with open(lock_path, "r", encoding="utf-8") as f:
+            self.assertEqual(b_content, f.read())
+        b._release_lock(lock_path)
+        self.assertFalse(os.path.isfile(lock_path))
+
+    def test_release_by_instance_that_never_acquired_leaves_lock(self):
+        holder, other = Ledger(self.ledger_path), Ledger(self.ledger_path)
+        lock_path = holder._acquire_lock(timeout=1)
+        other._release_lock(lock_path)
+        self.assertTrue(os.path.isfile(lock_path), "a non-holder's release deleted the lock")
+        holder._release_lock(lock_path)
+        self.assertFalse(os.path.isfile(lock_path))

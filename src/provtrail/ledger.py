@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -315,6 +316,8 @@ class Ledger:
 
     def __init__(self, path: str):
         self.path = str(path)
+        # lock path -> ownership token of the lock this instance currently holds
+        self._lock_tokens: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Locking
@@ -326,13 +329,19 @@ class Ledger:
     def _acquire_lock(self, timeout: float = 10.0, poll_interval: float = 0.05) -> str:
         lock_path = self._lock_path()
         start = time.monotonic()
+        token = secrets.token_hex(16)
+        content = json.dumps(
+            {"token": token, "pid": os.getpid(), "acquired_at": now_rfc3339()},
+            sort_keys=True,
+        ).encode("ascii")
         while True:
             try:
                 fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 try:
-                    os.write(fd, str(os.getpid()).encode("ascii"))
+                    os.write(fd, content)
                 finally:
                     os.close(fd)
+                self._lock_tokens[lock_path] = token
                 return lock_path
             except FileExistsError:
                 if time.monotonic() - start >= timeout:
@@ -342,9 +351,22 @@ class Ledger:
                 time.sleep(poll_interval)
 
     def _release_lock(self, lock_path: str) -> None:
-        # We only ever remove a lock file this process created via
-        # O_CREAT|O_EXCL above, so this never steals or deletes a
-        # foreign lock.
+        # Remove the lock file only while it still holds this acquisition's
+        # token. If the file was removed externally and another holder has
+        # since created it, the tokens differ and that holder's lock is left
+        # alone. The read and the remove are two steps, so a replacement in
+        # between is still possible: this narrows the race, it does not
+        # close it.
+        token = self._lock_tokens.pop(lock_path, None)
+        if token is None:
+            return
+        try:
+            with open(lock_path, "r", encoding="utf-8") as f:
+                current = json.loads(f.read())
+        except (OSError, ValueError):
+            return
+        if not isinstance(current, dict) or current.get("token") != token:
+            return
         try:
             os.remove(lock_path)
         except OSError:

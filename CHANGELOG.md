@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.4] - 2026-09-12
+
+### Fixed
+- Lock ownership. Releasing the `<ledger>.lock` removed the file unconditionally, so if the lock
+  was deleted while its owner was still running and another process then acquired it, the first
+  owner's release deleted the second owner's lock. The lock file now records an ownership token,
+  PID and acquisition time, and a release removes the file only while it still holds its own
+  token. The read and the remove are separate steps, so this narrows the race rather than
+  closing it.
+- README: the chain's guarantee is stated precisely. It detects accidental or partial edits; an
+  attacker who rewrites the affected record and every later one, recomputing hashes, produces
+  another internally valid ledger, which only an external anchor detects.
+- README: a stale lock should be removed manually only after confirming that no process with the
+  recorded PID is still running.
+
+### Added
+- `provtrail --version`.
+
 ## [0.2.3] - 2026-09-12
 
 Documentation and packaging only; no change to the library, CLI, hook or MCP server.

@@ -284,3 +284,19 @@ class TestVerifyExpect(CliTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVersion(unittest.TestCase):
+    def test_version_flag_prints_package_version_and_exits_zero(self):
+        import subprocess
+
+        import provtrail
+
+        env = dict(os.environ)
+        env["PYTHONPATH"] = _SRC + os.pathsep + env.get("PYTHONPATH", "")
+        r = subprocess.run(
+            [sys.executable, "-m", "provtrail", "--version"],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(f"provtrail {provtrail.__version__}", r.stdout.strip())
