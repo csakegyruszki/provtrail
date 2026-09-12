@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 2026-09-12
+
+### Fixed
+- `extra` now has to be a JSON object with string keys at every level. Before, `add` accepted
+  `{1: "one"}` and stored it as `{"1": "one"}`, so the record on disk was not the one passed in;
+  mixed key types and values that are not JSON raised a bare `TypeError`. Both now raise
+  `ValueError` (`INVALID_FIELD_TYPE`) and nothing is written.
+- The sdist now ships `tests/vectors/*.json` and `.github/workflows/tests.yml`, so its own test
+  suite runs. In 0.2.0, 14 tests failed and 1 errored when run from the sdist.
+- README: the canonical JSON definition now includes `allow_nan=False`.
+
 ## [0.2.0] - 2026-09-12
 
 ### Added

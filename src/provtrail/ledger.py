@@ -75,6 +75,21 @@ _STRING_FIELDS = (
 )
 
 
+def _find_non_string_key(value: Any) -> Any:
+    """Return the first non-string dict key anywhere in ``value``, else None."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    return key
+                stack.append(child)
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return None
+
+
 def _validate_record_fields(rec: Mapping[str, Any]) -> List[Dict[str, str]]:
     """Structural, per-record field checks shared by ``add`` and ``verify``.
 
@@ -124,6 +139,18 @@ def _validate_record_fields(rec: Mapping[str, Any]) -> List[Dict[str, str]]:
             {
                 "code": "INVALID_FIELD_TYPE",
                 "message": f"extra must be an object, got {rec['extra']!r}",
+            }
+        )
+    elif "extra" in rec and _find_non_string_key(rec["extra"]) is not None:
+        # json.dumps would silently turn 1 into "1", so the stored record
+        # would no longer be what the caller passed.
+        violations.append(
+            {
+                "code": "INVALID_FIELD_TYPE",
+                "message": (
+                    "extra keys must be strings, got "
+                    f"{_find_non_string_key(rec['extra'])!r}"
+                ),
             }
         )
 
@@ -503,6 +530,8 @@ class Ledger:
             canonical_json_bytes(prevalidation)
         except ValueError as e:
             raise ValueError(f"record contains a non-finite float: {e}") from e
+        except TypeError as e:
+            raise ValueError(f"record contains a value that is not JSON: {e}") from e
 
         lock_path = self._acquire_lock(timeout=lock_timeout)
         try:

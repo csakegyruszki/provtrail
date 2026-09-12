@@ -557,3 +557,34 @@ class TestAddSingleRead(TempLedgerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExtraIsJsonObject(TempLedgerTestCase):
+    """`extra` must round-trip through JSON unchanged: string keys only, JSON values only."""
+
+    def _assert_rejected(self, extra):
+        led = Ledger(self.ledger_path)
+        with self.assertRaises(ValueError):
+            led.add(source_url="https://example.com/a", extra=extra)
+        self.assertFalse(os.path.exists(self.ledger_path))
+
+    def test_non_string_top_level_key_is_rejected(self):
+        # json.dumps would silently rewrite 1 as "1": the stored record would
+        # differ from what the caller passed.
+        self._assert_rejected({1: "one"})
+
+    def test_mixed_key_types_raise_value_error_not_type_error(self):
+        self._assert_rejected({1: "one", "a": "two"})
+
+    def test_non_string_nested_key_is_rejected(self):
+        self._assert_rejected({"a": [{"b": {2: "c"}}]})
+
+    def test_non_json_value_is_rejected(self):
+        self._assert_rejected({"a": object()})
+
+    def test_json_object_with_string_keys_is_accepted(self):
+        led = Ledger(self.ledger_path)
+        extra = {"a": [1, 2.5, None, True, {"b": "c"}], "d": {}}
+        rec = led.add(source_url="https://example.com/a", extra=extra)
+        self.assertEqual(extra, rec["extra"])
+        self.assertTrue(led.verify().ok)

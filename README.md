@@ -191,8 +191,9 @@ which a schema validator does not do.
 | `prev_hash` | string or null | `record_hash` of the previous record; `null` for `seq` 1. |
 | `record_hash` | string | `sha256:` digest of the canonical JSON of the record, excluding `record_hash` and `id`. |
 
-Canonical JSON is `json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
-encoded as UTF-8.
+Canonical JSON is
+`json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)`
+encoded as UTF-8. `NaN` and `Infinity` are rejected, and keys inside `extra` must be strings.
 
 ### Violation codes
 

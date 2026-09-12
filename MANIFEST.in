@@ -1,4 +1,6 @@
 include CHANGELOG.md
 recursive-include integrations *.py *.json *.md
 recursive-include schema *.json
+recursive-include tests/vectors *.json
+include .github/workflows/tests.yml
 global-exclude __pycache__ *.py[cod]
