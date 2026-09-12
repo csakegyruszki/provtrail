@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.3] - 2026-09-12
+
+Documentation and packaging only; no change to the library, CLI, hook or MCP server.
+
+### Fixed
+- README: the "Record contract" section still described the 0.1 rules. It now matches what
+  `verify` checks, including the required `kind` and the rejection of unknown fields.
+- README: the `--expect` examples use an explicit `<64-hex-digest>` placeholder; the truncated
+  digest shown before made the command exit 2 when copied.
+- README: `extra` is described precisely. Values are read back equal to the input; subclasses of
+  the built-in types (such as `OrderedDict` or an `IntEnum` member) come back as the plain type.
+- `.gitattributes` pins LF line endings, so a build from a Windows checkout produces the same
+  bytes as the tagged source. The 0.2.2 sdist differed from its tag only in CRLF line endings.
+
+### Changed
+- README reorganised for first-time readers (installation and usage before the scope and contract
+  sections), tighter wording, and hardware and date for the benchmark figures.
+
 ## [0.2.2] - 2026-09-12
 
 ### Fixed

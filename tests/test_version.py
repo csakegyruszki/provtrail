@@ -17,7 +17,7 @@ _PYPROJECT_PATH = os.path.join(_ROOT, "pyproject.toml")
 
 class TestVersion(unittest.TestCase):
     def test_package_version_is_0_2_0(self):
-        self.assertEqual(provtrail.__version__, "0.2.2")
+        self.assertEqual(provtrail.__version__, "0.2.3")
 
     def test_pyproject_version_matches_package_version(self):
         # Read as text rather than parsing TOML, so the test does not

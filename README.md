@@ -5,53 +5,8 @@ Source provenance ledger for LLM-assisted research.
 provtrail is an append-only, hash-chained JSONL ledger for recording which sources were captured
 during LLM-assisted research, and when. It has no runtime dependencies beyond the Python standard
 library. It includes a command-line interface, a Claude Code Stop hook, an agent skill, and an
-optional MCP server.
-
-## What the ledger establishes, and what it does not
-
-The ledger establishes:
-
-- that each record is unchanged since it was appended, and that records have not been edited,
-  reordered or removed in the middle of the file (`provtrail verify` recomputes every hash and
-  walks the `prev_hash` chain);
-- that, for a record with a `content_hash`, the referenced bytes are the ones that were hashed
-  (`verify --check-files` re-hashes files stored under the ledger's directory).
-
-The ledger does not establish:
-
-- that a source was actually read or consulted. A record can be written without reading anything,
-  and the tool cannot tell a genuine capture from a fabricated one;
-- that a URL was reachable, or that supplied content came from that URL. provtrail never makes
-  network requests;
-- that a source supports the `claim` stored next to it;
-- when a capture happened, beyond the caller's own clock. `captured_at` is written by the process
-  that appends the record; it is not a trusted timestamp;
-- that nothing was removed from the end of the file, or that the whole file was not rewritten --
-  unless the caller has separately recorded an anchor. `provtrail head` prints the last record's
-  `seq:record_hash`; storing that anchor somewhere outside the ledger and later checking it with
-  `provtrail verify --expect` (or `--expect-file`) detects truncation and whole-file rewrites (see
-  "Anchoring" below). Without a stored anchor, this is still undetectable.
-
-The Claude Code Stop hook checks whether at least one valid record exists for the current session.
-In `enforce` and `strict` mode a single record satisfies it, whatever the session later asserts.
-The Stop hook shows that capture happened, not that every source used was captured: it does not
-know how many sources the turn or session actually drew on, so one record and ten both pass it the
-same way. Showing that every source was captured would require linking individual tool events
-(each web fetch, each file read) to a corresponding ledger record and confirming none is missing,
-which provtrail does not do. It is a reminder that capture happened, not a check that each
-statement has a source, and it should not be used as an audit control.
-
-## Record contract
-
-A record is valid if and only if:
-
-- `captured_at` is an RFC 3339 `date-time`: `T` separator, optional fractional seconds, and `Z` or
-  a `±HH:MM` offset (a leap second `:60` is accepted and treated as `:59`), and
-- `source_url` is a non-empty string, or `content_hash` is a `sha256:<64 hex>` string, or both.
-
-All other fields (`kind`, `tool`, `query`, `title`, `claim`, `snippet`, `archived_url`, `path`,
-`session_id`, `extra`) are optional metadata. Each record stores the `record_hash` of its
-predecessor in `prev_hash`.
+optional MCP server. What a verified ledger does and does not prove is set out under "What the
+ledger establishes, and what it does not".
 
 ## Installation
 
@@ -86,7 +41,7 @@ provtrail check ./ledger.jsonl --session-id abc123
 provtrail head ./ledger.jsonl
 
 # verify against one or more previously recorded anchors
-provtrail verify ./ledger.jsonl --expect 42:sha256:6f2c...
+provtrail verify ./ledger.jsonl --expect 42:sha256:<64-hex-digest>
 provtrail verify ./ledger.jsonl --expect-file ./anchors.txt
 ```
 
@@ -118,10 +73,10 @@ the ledger itself cannot reach.
 
 `provtrail head LEDGER` prints that anchor as `seq:record_hash` (`--json` for `{"seq": N,
 "record_hash": "sha256:..."}`); it exits 1 if the ledger has no records or fails verification.
-Store the anchor wherever suits the workflow -- a git commit message, a separate append-only log,
-a timestamping service -- then check it later with:
+Store the anchor outside the ledger, for example in a signed git commit, a separate append-only log
+or a timestamping service, and check it later with `provtrail verify --expect`.
 
-For example, anchoring in a signed git commit:
+Anchoring in a signed git commit:
 
 ```bash
 anchor=$(provtrail head ./ledger.jsonl)
@@ -141,13 +96,13 @@ curl -s -H "Content-Type: application/timestamp-query" --data-binary @anchor.tsq
 ```
 
 `anchor.tsr` is a timestamp token binding the anchor's hash to a time attested by the timestamping
-authority; keep it alongside `anchor.txt`. Either way, provtrail itself does not sign, timestamp,
-or transmit anything -- both examples are external to the ledger.
+authority; keep it alongside `anchor.txt`. provtrail itself does not sign, timestamp or transmit
+anything; both examples are external to the ledger.
 
-Then check the stored anchor later with:
+Checking stored anchors:
 
 ```bash
-provtrail verify ./ledger.jsonl --expect 42:sha256:6f2c...
+provtrail verify ./ledger.jsonl --expect 42:sha256:<64-hex-digest>
 # or, for several anchors collected over time, one per line:
 provtrail verify ./ledger.jsonl --expect-file ./anchors.txt
 ```
@@ -162,6 +117,56 @@ Violations: `ANCHOR_MISSING` (no record at that `seq`, e.g. the ledger was trunc
 Library equivalents: `Ledger.head()` returns `(seq, record_hash)` or `None`; `Ledger.verify(...,
 expect=[(seq, record_hash), ...])` checks the same anchors and folds `ANCHOR_MISSING`/
 `ANCHOR_MISMATCH` into its usual violation list.
+
+## What the ledger establishes, and what it does not
+
+The ledger establishes:
+
+- that each record is unchanged since it was appended, and that records have not been edited,
+  reordered or removed in the middle of the file (`provtrail verify` recomputes every hash and
+  walks the `prev_hash` chain);
+- that, for a record with a `content_hash`, the referenced bytes are the ones that were hashed
+  (`verify --check-files` re-hashes files stored under the ledger's directory).
+
+The ledger does not establish:
+
+- that a source was actually read or consulted. A record can be written without reading anything,
+  and the tool cannot tell a genuine capture from a fabricated one;
+- that a URL was reachable, or that supplied content came from that URL. provtrail never makes
+  network requests;
+- that a source supports the `claim` stored next to it;
+- when a capture happened, beyond the caller's own clock. `captured_at` is written by the process
+  that appends the record; it is not a trusted timestamp;
+- that nothing was removed from the end of the file, or that the whole file was not rewritten,
+  unless an anchor was recorded outside the ledger beforehand. `provtrail head` prints the last
+  record's `seq:record_hash`; checking a stored anchor later with `provtrail verify --expect`
+  detects truncation and whole-file rewrites (see "Anchoring"). Without a stored anchor, neither
+  is detectable.
+
+The Claude Code Stop hook checks that at least one valid record exists for the current session or
+turn. It does not know how many sources the session drew on, so one record satisfies it as fully
+as ten. Proving that every source was captured would require matching each tool event (each web
+fetch, each file read) to a ledger record, which provtrail does not do. The hook is a reminder to
+capture sources, not an audit control.
+
+## Record contract
+
+`provtrail verify` accepts a record when all of the following hold (each failure has a code, listed
+under "Violation codes"):
+
+- `schema` is `provtrail/v1`, and `seq`, `prev_hash`, `record_hash` and `id` are consistent with
+  the chain;
+- `captured_at` is an RFC 3339 `date-time`: `T` separator, optional fractional seconds, and `Z` or
+  a `±HH:MM` offset (a leap second `:60` is accepted and treated as `:59`);
+- `source_url` is a non-empty string, or `content_hash` is `sha256:` followed by 64 lower-case hex
+  digits, or both;
+- `kind` is one of `url`, `search`, `scrape`, `file`, `manual` (`provtrail add` defaults it to
+  `url`);
+- every key is a v1 field, and every field has its documented type.
+
+`tool`, `query`, `title`, `claim`, `snippet`, `archived_url`, `path`, `session_id` and `extra` are
+optional. `provtrail add` applies the same field checks before writing, so it never appends a
+record that `verify` would reject.
 
 ## Record schema (v1)
 
@@ -193,9 +198,11 @@ which a schema validator does not do.
 
 Canonical JSON is
 `json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)`
-encoded as UTF-8. `NaN` and `Infinity` are rejected. `extra` may hold only values JSON stores
-unchanged: objects with string keys, arrays, strings, numbers, booleans and `null`. A tuple, for
-example, is rejected rather than stored as an array.
+encoded as UTF-8. `NaN` and `Infinity` are rejected. `extra` may hold only JSON values:
+objects with string keys, arrays, strings, numbers, booleans and `null`. Anything JSON would
+rewrite or cannot represent, such as a `None` or integer key, a tuple, a set or bytes, is rejected.
+Subclasses of the built-in types (an `OrderedDict`, an `IntEnum` member) are accepted and read
+back as the plain type, with an equal value.
 
 ### Violation codes
 
@@ -258,7 +265,7 @@ Scope of the check:
 - Records dated more than 300 seconds after the hook runs do not count (a margin for clock
   differences between the writer and the hook).
 - The window opens at the first `timestamp` found in the session transcript, when there is one
-  (`scope: "session"`, the default -- see "Turn scope" below for `scope: "turn"`). This relies on
+  (`scope: "session"`, the default; see "Turn scope" below for `scope: "turn"`). This relies on
   the transcript's JSONL format, which Claude Code does not document; if the format changes, the
   hook falls back to `session_id` alone, or to `UNKNOWN` when neither is available.
 - An absent ledger file in an existing directory counts as `MISSING`; an absent directory as
@@ -287,7 +294,7 @@ timestamp, it opens at the LAST transcript entry that is a human prompt: `type =
 list containing no `tool_result` block. Two other kinds of transcript entry also have `type ==
 "user"` and must not be mistaken for a prompt: Stop-hook feedback (`isMeta: true`, injected by a
 previous hook run) and tool-result entries. If no qualifying entry exists, or the transcript
-cannot be read, the state is `UNKNOWN` -- turn scope never falls back to session scope's
+cannot be read, the state is `UNKNOWN`; turn scope never falls back to session scope's
 first-timestamp behaviour. The `session_id` filter and the 300-second future bound still apply on
 top of the turn window.
 
@@ -312,17 +319,17 @@ Neither tool takes a ledger path; the server resolves it from its working direct
 configuration rules as the hook. `provtrail_add` accepts `source_url`, `content`, `content_path`,
 `tool`, `kind`, `claim`, `title`, `query`, `snippet`, `archived_url` and `session_id`. A
 `content_path` must resolve, after following symlinks, inside the ledger's directory; the file is
-hashed from its raw bytes and its relative path is stored in `path`. Internally the server also
-passes the ledger's directory as `content_root` to `Ledger.add` (see below), as a second,
-library-level enforcement of the same confinement rule the MCP tool already checks itself.
+hashed from its raw bytes and its relative path is stored in `path`. The server also passes the
+ledger's directory to `Ledger.add` as `content_root` (see below), so the library enforces the same
+rule a second time.
 `session_id` defaults to the `CLAUDE_CODE_SESSION_ID` environment variable, which Claude Code
 sets for Bash tool subprocesses and stdio MCP server processes.
 
 ### `Ledger.add(..., content_root=...)`
 
 When `content_root` is given together with `content_path`, the realpath of `content_path` must
-resolve inside `content_root`, else `Ledger.add` raises `ValueError` before writing anything. The
-default `None` preserves the library's previous behaviour of hashing any readable `content_path`.
+resolve inside `content_root`, else `Ledger.add` raises `ValueError` before writing anything. With
+the default `None`, any readable `content_path` is hashed.
 This is a path-containment check, not a security sandbox: it resolves `content_path` once, at
 check time, so it does not stop a file being replaced by a symlink pointing outside
 `content_root` between the check and the read (a time-of-check/time-of-use race), and it does not
@@ -336,13 +343,14 @@ adversarial filesystem.
   record in the middle of the ledger is always detected. Removing records from the end leaves a
   valid, shorter chain, and anyone who can rewrite the whole file can build a new consistent one;
   `provtrail verify` alone cannot tell that apart from a ledger that legitimately never had those
-  records. Detecting it requires recording an anchor outside the ledger first -- see "Anchoring"
-  above -- and checking it later; without a stored anchor, this is still undetectable.
+  records. Detecting it requires recording an anchor outside the ledger first and checking it
+  later (see "Anchoring"); without a stored anchor, it is undetectable.
 - **A ledger that fails verification is not extended.** `add` verifies the ledger before
   appending and refuses if any violation is found. Repair the file or start a new ledger.
 - **Cost of appending.** Every `add` verifies the whole ledger, so appending is linear in the
-  ledger's length. Measured on this machine (Windows 11, laptop, Python 3.13.14, `Ledger.add` in a
-  loop, timing the last 100 appends at each size): at 1,000 records, append latency p50 = 36.3 ms,
+  ledger's length. Measured on 2026-09-12 on a Windows 11 laptop (Intel Core i5-13420H,
+  32 GB RAM, NVMe SSD; Python 3.13.14; `Ledger.add` in a loop, timing the last 100 appends at each
+  size): at 1,000 records, append latency p50 = 36.3 ms,
   p95 = 45.9 ms, and `verify` on the full ledger takes 0.04 s; at 10,000 records, append p50 =
   176.8 ms, p95 = 205.5 ms, and `verify` takes 0.18 s. This is fine for research sessions of
   hundreds or thousands of records, not for very large ledgers.
