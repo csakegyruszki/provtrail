@@ -193,7 +193,9 @@ which a schema validator does not do.
 
 Canonical JSON is
 `json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)`
-encoded as UTF-8. `NaN` and `Infinity` are rejected, and keys inside `extra` must be strings.
+encoded as UTF-8. `NaN` and `Infinity` are rejected. `extra` may hold only values JSON stores
+unchanged: objects with string keys, arrays, strings, numbers, booleans and `null`. A tuple, for
+example, is rejected rather than stored as an array.
 
 ### Violation codes
 
@@ -206,6 +208,8 @@ encoded as UTF-8. `NaN` and `Infinity` are rejected, and keys inside `extra` mus
 | `MISSING_SOURCE_LOCATOR` | Neither `source_url` nor a valid `content_hash` is present. |
 | `INVALID_KIND` | `kind` is missing or not one of `url`, `search`, `scrape`, `file`, `manual`. |
 | `INVALID_CONTENT_HASH` | `content_hash` is present but not a well-formed `sha256:<64 lower-case hex>` string. |
+| `UNKNOWN_FIELD` | The record has a key that is not a field of the v1 schema. |
+| `INVALID_FIELD_TYPE` | A field has the wrong type: `seq` not an integer >= 1, a string field holding a non-string, `extra` not an object or holding a non-JSON value, `prev_hash` neither `null` nor `sha256:<64 lower-case hex>`. |
 | `BAD_SEQ` | `seq` does not follow the previous record. |
 | `CHAIN_BROKEN` | `prev_hash` does not match the previous record's `record_hash`. |
 | `HASH_MISMATCH` | `record_hash` does not match the recomputed value. |

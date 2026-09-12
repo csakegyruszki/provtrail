@@ -200,7 +200,10 @@ def _find_turn_since(transcript_path):
 
 def _until_str(seconds: int = 300) -> str:
     dt = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    # Round up, not down: the window must never be shorter than `seconds`.
+    if dt.microsecond:
+        dt = dt.replace(microsecond=0) + timedelta(seconds=1)
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 def run(payload: dict) -> int:

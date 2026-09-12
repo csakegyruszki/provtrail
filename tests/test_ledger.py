@@ -588,3 +588,27 @@ class TestExtraIsJsonObject(TempLedgerTestCase):
         rec = led.add(source_url="https://example.com/a", extra=extra)
         self.assertEqual(extra, rec["extra"])
         self.assertTrue(led.verify().ok)
+
+
+class TestExtraIsPlainJson(TempLedgerTestCase):
+    """Only values JSON represents without change: dict (str keys), list, str, int, float, bool, None."""
+
+    def _assert_rejected(self, extra):
+        with self.assertRaises(ValueError):
+            Ledger(self.ledger_path).add(source_url="https://example.com/a", extra=extra)
+        self.assertFalse(os.path.exists(self.ledger_path))
+
+    def test_none_key_is_rejected(self):
+        # json.dumps writes None as "null".
+        self._assert_rejected({None: "x"})
+
+    def test_none_key_inside_list_is_rejected(self):
+        self._assert_rejected({"a": [{None: 1}]})
+
+    def test_tuple_value_is_rejected(self):
+        # json.dumps writes a tuple as a list, so the stored record would differ.
+        self._assert_rejected({"n": (1, "x")})
+
+    def test_none_value_is_accepted(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/a", extra={"a": None})
+        self.assertEqual({"a": None}, rec["extra"])

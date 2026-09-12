@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] - 2026-09-12
+
+### Fixed
+- The 0.2.1 `extra` check still let two cases through: a `None` key (stored as `"null"`) and
+  tuple values (stored as arrays). `extra` now accepts only dicts with string keys, lists,
+  strings, numbers, booleans and `None`, at every level; anything else raises `ValueError`
+  (`INVALID_FIELD_TYPE`) and nothing is written.
+- Stop hook: the 300-second future bound is rounded up to the next whole second instead of
+  down, so the window is never shorter than 300 seconds.
+- README: the violation-code table now lists `UNKNOWN_FIELD` and `INVALID_FIELD_TYPE`.
+
 ## [0.2.1] - 2026-09-12
 
 ### Fixed

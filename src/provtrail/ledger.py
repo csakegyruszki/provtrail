@@ -75,18 +75,25 @@ _STRING_FIELDS = (
 )
 
 
-def _find_non_string_key(value: Any) -> Any:
-    """Return the first non-string dict key anywhere in ``value``, else None."""
+def _find_non_json_value(value: Any) -> Optional[str]:
+    """Describe the first part of ``value`` JSON cannot store unchanged, else None.
+
+    Allowed at every level: dict with string keys, list, str, int, float,
+    bool and None. Anything else (a None or int key, a tuple, a set, bytes,
+    ...) is either rewritten by json.dumps or not serializable at all.
+    """
     stack = [value]
     while stack:
         item = stack.pop()
         if isinstance(item, dict):
             for key, child in item.items():
                 if not isinstance(key, str):
-                    return key
+                    return f"non-string key {key!r}"
                 stack.append(child)
-        elif isinstance(item, (list, tuple)):
+        elif isinstance(item, list):
             stack.extend(item)
+        elif item is not None and not isinstance(item, (str, int, float)):
+            return f"value of type {type(item).__name__}"
     return None
 
 
@@ -141,18 +148,17 @@ def _validate_record_fields(rec: Mapping[str, Any]) -> List[Dict[str, str]]:
                 "message": f"extra must be an object, got {rec['extra']!r}",
             }
         )
-    elif "extra" in rec and _find_non_string_key(rec["extra"]) is not None:
-        # json.dumps would silently turn 1 into "1", so the stored record
-        # would no longer be what the caller passed.
-        violations.append(
-            {
-                "code": "INVALID_FIELD_TYPE",
-                "message": (
-                    "extra keys must be strings, got "
-                    f"{_find_non_string_key(rec['extra'])!r}"
-                ),
-            }
-        )
+    elif "extra" in rec:
+        # json.dumps would silently turn 1 into "1" or a tuple into a list,
+        # so the stored record would no longer be what the caller passed.
+        problem = _find_non_json_value(rec["extra"])
+        if problem is not None:
+            violations.append(
+                {
+                    "code": "INVALID_FIELD_TYPE",
+                    "message": f"extra must hold only JSON values, found {problem}",
+                }
+            )
 
     if "prev_hash" in rec:
         prev_hash_val = rec["prev_hash"]

@@ -529,3 +529,17 @@ class TestTurnScope(StopHookTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFutureBound(unittest.TestCase):
+    def test_until_is_not_shorter_than_the_stated_window(self):
+        from datetime import datetime, timedelta, timezone
+
+        src = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        from provtrail.stop_hook import _until_str
+
+        before = datetime.now(timezone.utc)
+        until = datetime.fromisoformat(_until_str(300).replace("Z", "+00:00"))
+        self.assertGreaterEqual(until, before + timedelta(seconds=300))
