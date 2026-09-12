@@ -181,5 +181,106 @@ class TestCheck(CliTestCase):
         self.assertEqual(data["state"], "PRESENT")
 
 
+class TestHead(CliTestCase):
+    def test_head_on_empty_ledger_exits_1(self):
+        code, _out, err = self.run_cli(["head", self.ledger_path])
+        self.assertEqual(code, 1)
+        self.assertIn("no records", err)
+
+    def test_head_prints_seq_colon_hash(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        code, out, _ = self.run_cli(["head", self.ledger_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), f"{rec['seq']}:{rec['record_hash']}")
+
+    def test_head_json_output_parses(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        code, out, _ = self.run_cli(["head", self.ledger_path, "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["seq"], rec["seq"])
+        self.assertEqual(data["record_hash"], rec["record_hash"])
+
+    def test_head_on_failing_verification_exits_1(self):
+        Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        with open(self.ledger_path, "r", encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        rec["title"] = "tampered"
+        with open(self.ledger_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+        code, _out, err = self.run_cli(["head", self.ledger_path])
+        self.assertEqual(code, 1)
+        self.assertIn("verification", err)
+
+
+class TestVerifyExpect(CliTestCase):
+    def test_verify_expect_matching_anchor_passes(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        code, out, _ = self.run_cli(
+            ["verify", self.ledger_path, "--expect", f"{rec['seq']}:{rec['record_hash']}"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("OK", out)
+
+    def test_verify_expect_truncated_ledger_fails_with_anchor_missing(self):
+        Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        rec2 = Ledger(self.ledger_path).add(source_url="https://example.com/1")
+        with open(self.ledger_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        with open(self.ledger_path, "w", encoding="utf-8") as f:
+            f.writelines(lines[:-1])
+        code, out, _ = self.run_cli(
+            ["verify", self.ledger_path, "--json",
+             "--expect", f"{rec2['seq']}:{rec2['record_hash']}"]
+        )
+        self.assertEqual(code, 1)
+        data = json.loads(out)
+        codes = {v["code"] for v in data["violations"]}
+        self.assertIn("ANCHOR_MISSING", codes)
+
+    def test_verify_expect_wrong_hash_fails_with_anchor_mismatch(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        bogus_hash = "sha256:" + ("0" if rec["record_hash"][-1] != "0" else "1") * 64
+        code, out, _ = self.run_cli(
+            ["verify", self.ledger_path, "--json",
+             "--expect", f"{rec['seq']}:{bogus_hash}"]
+        )
+        self.assertEqual(code, 1)
+        data = json.loads(out)
+        codes = {v["code"] for v in data["violations"]}
+        self.assertIn("ANCHOR_MISMATCH", codes)
+
+    def test_verify_malformed_expect_is_usage_error_exit_2(self):
+        Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        code, _out, err = self.run_cli(
+            ["verify", self.ledger_path, "--expect", "not-a-valid-spec"]
+        )
+        self.assertEqual(code, 2)
+        self.assertTrue(err.strip())
+
+    def test_verify_expect_file_matching_anchor_passes(self):
+        rec = Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        expect_file = os.path.join(self.tmpdir, "anchors.txt")
+        with open(expect_file, "w", encoding="utf-8") as f:
+            f.write("# a comment\n\n")
+            f.write(f"{rec['seq']}:{rec['record_hash']}\n")
+        code, out, _ = self.run_cli(
+            ["verify", self.ledger_path, "--expect-file", expect_file]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("OK", out)
+
+    def test_verify_expect_file_malformed_line_is_usage_error_exit_2(self):
+        Ledger(self.ledger_path).add(source_url="https://example.com/0")
+        expect_file = os.path.join(self.tmpdir, "anchors.txt")
+        with open(expect_file, "w", encoding="utf-8") as f:
+            f.write("garbage line\n")
+        code, _out, err = self.run_cli(
+            ["verify", self.ledger_path, "--expect-file", expect_file]
+        )
+        self.assertEqual(code, 2)
+        self.assertTrue(err.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

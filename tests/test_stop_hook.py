@@ -21,6 +21,41 @@ def write_transcript(path, timestamp=None):
         f.write("\n".join(lines) + "\n")
 
 
+def write_entries(path, entries):
+    """Write a synthetic transcript from raw entry dicts, one per line."""
+    with open(path, "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+
+
+def human_prompt(timestamp, text="hello"):
+    """A real human-prompt transcript entry, per the measured shape."""
+    return {"type": "user", "timestamp": timestamp, "message": {"role": "user", "content": text}}
+
+
+def tool_result_entry(timestamp):
+    """A tool-result entry: also type=='user', but must not open a turn."""
+    return {
+        "type": "user",
+        "timestamp": timestamp,
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        "toolUseResult": {"stdout": "ok"},
+    }
+
+
+def stop_hook_feedback_entry(timestamp, text="provtrail: source ledger state is MISSING"):
+    """A Stop-hook feedback entry: also type=='user', must not open a turn."""
+    return {
+        "type": "user",
+        "timestamp": timestamp,
+        "isMeta": True,
+        "message": {"role": "user", "content": text},
+    }
+
+
 def run_hook(payload, env_extra=None, cwd=None):
     env = dict(os.environ)
     env["PYTHONPATH"] = _SRC + os.pathsep + env.get("PYTHONPATH", "")
@@ -315,6 +350,181 @@ class TestEnvConfig(StopHookTestCase):
         self.assertEqual(proc.returncode, 0)
         data = json.loads(proc.stdout)
         self.assertIn("systemMessage", data)
+
+
+class TestTurnScope(StopHookTestCase):
+    def add_config_scope(self, scope, mode="report"):
+        config_path = os.path.join(self.tmpdir, ".provtrail.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({"ledger": self.ledger_path, "mode": mode, "scope": scope}, f)
+
+    def test_turn_scope_opens_at_last_prompt_not_first(self):
+        # Session scope would open the window at the FIRST prompt (T1),
+        # which would include the record captured between the two
+        # prompts. Turn scope must open at the LAST prompt (T2) instead,
+        # excluding that same record.
+        self.add_config_scope("turn")
+        self.add_record(captured_at="2025-01-01T00:00:30Z")
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                human_prompt("2025-01-01T00:01:00Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIn("systemMessage", data)
+        self.assertIn("MISSING", data["systemMessage"])
+
+    def test_session_scope_same_transcript_is_present(self):
+        # Control for the test above: under the default session scope
+        # (no "scope" key at all), the same transcript and record must
+        # report PRESENT rather than MISSING.
+        config_path = os.path.join(self.tmpdir, ".provtrail.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({"ledger": self.ledger_path, "mode": "report"}, f)
+        self.add_record(captured_at="2025-01-01T00:00:30Z")
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                human_prompt("2025-01-01T00:01:00Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")  # PRESENT -> no systemMessage
+
+    def test_turn_scope_present_when_record_after_last_prompt(self):
+        self.add_config_scope("turn")
+        self.add_record(captured_at="2025-01-01T00:01:10Z")
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                human_prompt("2025-01-01T00:01:00Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")  # PRESENT -> no systemMessage
+
+    def test_stop_hook_feedback_entry_is_not_mistaken_for_the_prompt(self):
+        # The feedback entry is timestamped AFTER the real prompt and
+        # after the record. If it were mistaken for a human prompt, the
+        # window would open too late and the record would be excluded.
+        self.add_config_scope("turn")
+        self.add_record(captured_at="2025-01-01T00:00:10Z")
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                stop_hook_feedback_entry("2025-01-01T00:00:20Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")  # PRESENT -> no systemMessage
+
+    def test_tool_result_entry_is_not_mistaken_for_the_prompt(self):
+        # Same idea with a tool-result entry, which also has type=="user".
+        self.add_config_scope("turn")
+        self.add_record(captured_at="2025-01-01T00:00:10Z")
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                tool_result_entry("2025-01-01T00:00:20Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")  # PRESENT -> no systemMessage
+
+    def test_turn_scope_no_qualifying_entry_is_unknown_even_with_session_id(self):
+        # Turn scope must never fall back to session scope's behaviour:
+        # even with a session_id present, no qualifying prompt means
+        # UNKNOWN, not a session-id-only check.
+        self.add_config_scope("turn", mode="enforce")
+        self.add_record(captured_at="2020-01-01T00:00:00Z")
+        write_entries(
+            self.transcript_path,
+            [
+                tool_result_entry("2025-01-01T00:00:00Z"),
+                stop_hook_feedback_entry("2025-01-01T00:00:10Z"),
+            ],
+        )
+        proc = run_hook(
+            {
+                "cwd": self.tmpdir,
+                "transcript_path": self.transcript_path,
+                "stop_hook_active": False,
+                "session_id": "session-A",
+            }
+        )
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertNotEqual(data.get("decision"), "block")
+        self.assertIn("UNKNOWN", data["systemMessage"])
+
+    def test_turn_scope_missing_transcript_is_unknown(self):
+        self.add_config_scope("turn", mode="enforce")
+        self.add_record(captured_at="2020-01-01T00:00:00Z")
+        missing_transcript = os.path.join(self.tmpdir, "does-not-exist.jsonl")
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": missing_transcript, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertNotEqual(data.get("decision"), "block")
+        self.assertIn("UNKNOWN", data["systemMessage"])
+
+    def test_env_scope_turn_overrides_config_session(self):
+        self.add_record(captured_at="2025-01-01T00:00:30Z")
+        config_path = os.path.join(self.tmpdir, ".provtrail.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({"ledger": self.ledger_path, "mode": "report", "scope": "session"}, f)
+        write_entries(
+            self.transcript_path,
+            [
+                human_prompt("2025-01-01T00:00:00Z"),
+                human_prompt("2025-01-01T00:01:00Z"),
+            ],
+        )
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False},
+            env_extra={"PROVTRAIL_SCOPE": "turn"},
+        )
+        self.assertEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        self.assertIn("MISSING", data["systemMessage"])
+
+    def test_invalid_scope_value_is_reported_not_silent(self):
+        self.add_record(captured_at="2025-01-01T00:00:00Z")
+        config_path = os.path.join(self.tmpdir, ".provtrail.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({"ledger": self.ledger_path, "scope": "bogus"}, f)
+        write_transcript(self.transcript_path, "2025-01-01T00:00:00Z")
+        proc = run_hook(
+            {"cwd": self.tmpdir, "transcript_path": self.transcript_path, "stop_hook_active": False}
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertTrue(proc.stdout.strip(), "expected a systemMessage, got silent output")
+        data = json.loads(proc.stdout)
+        self.assertIn("systemMessage", data)
+        self.assertNotEqual(data.get("decision"), "block")
 
 
 if __name__ == "__main__":

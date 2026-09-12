@@ -385,5 +385,175 @@ class TestRecordsIterator(TempLedgerTestCase):
         self.assertIn("line 2", str(ctx.exception))
 
 
+class TestHeadAndAnchors(TempLedgerTestCase):
+    def test_head_is_none_for_empty_ledger(self):
+        self.assertIsNone(Ledger(self.ledger_path).head())
+
+    def test_head_returns_last_seq_and_hash(self):
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+        rec2 = ledger.add(source_url="https://example.com/1")
+        seq, record_hash = ledger.head()
+        self.assertEqual(seq, 2)
+        self.assertEqual(record_hash, rec2["record_hash"])
+
+    def test_verify_expect_matching_anchor_is_ok(self):
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+        rec2 = ledger.add(source_url="https://example.com/1")
+        report = ledger.verify(expect=[(2, rec2["record_hash"])])
+        self.assertTrue(report.ok, report.violations)
+
+    def test_verify_expect_truncated_ledger_gives_anchor_missing(self):
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+        rec2 = ledger.add(source_url="https://example.com/1")
+        # Simulate truncation: drop the last line and re-verify against
+        # the anchor recorded before the drop.
+        lines = self.read_lines()
+        self.write_lines(lines[:-1])
+        report = ledger.verify(expect=[(2, rec2["record_hash"])])
+        self.assertFalse(report.ok)
+        codes = {v["code"] for v in report.violations}
+        self.assertIn("ANCHOR_MISSING", codes)
+
+    def test_verify_expect_wrong_hash_gives_anchor_mismatch(self):
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+        ledger.add(source_url="https://example.com/1")
+        report = ledger.verify(expect=[(2, "sha256:" + "0" * 64)])
+        self.assertFalse(report.ok)
+        codes = {v["code"] for v in report.violations}
+        self.assertIn("ANCHOR_MISMATCH", codes)
+
+
+class TestKindAndContentHashValidation(TempLedgerTestCase):
+    def test_missing_kind_is_invalid_kind(self):
+        self.append_raw(
+            {
+                "schema": "provtrail/v1",
+                "seq": 1,
+                "id": "ev_0000000000000000",
+                "captured_at": now_rfc3339(),
+                "source_url": "https://example.com",
+                "prev_hash": None,
+                "record_hash": "sha256:" + "0" * 64,
+            }
+        )
+        codes = {v["code"] for v in Ledger(self.ledger_path).verify().violations}
+        self.assertIn("INVALID_KIND", codes)
+
+    def test_unknown_kind_is_invalid_kind(self):
+        self.append_raw(
+            {
+                "schema": "provtrail/v1",
+                "seq": 1,
+                "id": "ev_0000000000000000",
+                "captured_at": now_rfc3339(),
+                "kind": "not-a-real-kind",
+                "source_url": "https://example.com",
+                "prev_hash": None,
+                "record_hash": "sha256:" + "0" * 64,
+            }
+        )
+        codes = {v["code"] for v in Ledger(self.ledger_path).verify().violations}
+        self.assertIn("INVALID_KIND", codes)
+
+    def test_uppercase_content_hash_is_invalid(self):
+        self.append_raw(
+            {
+                "schema": "provtrail/v1",
+                "seq": 1,
+                "id": "ev_0000000000000000",
+                "captured_at": now_rfc3339(),
+                "kind": "file",
+                "content_hash": "sha256:" + "AB" * 32,
+                "prev_hash": None,
+                "record_hash": "sha256:" + "0" * 64,
+            }
+        )
+        codes = {v["code"] for v in Ledger(self.ledger_path).verify().violations}
+        self.assertIn("INVALID_CONTENT_HASH", codes)
+
+    def test_valid_kind_and_hash_do_not_trigger_new_codes(self):
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+        report = ledger.verify()
+        codes = {v["code"] for v in report.violations}
+        self.assertNotIn("INVALID_KIND", codes)
+        self.assertNotIn("INVALID_CONTENT_HASH", codes)
+
+
+class TestContentRoot(TempLedgerTestCase):
+    def test_content_path_inside_root_succeeds(self):
+        artifact_path = os.path.join(self.tmpdir, "artifact.txt")
+        with open(artifact_path, "w", encoding="utf-8") as f:
+            f.write("artifact content")
+        rec = Ledger(self.ledger_path).add(
+            content_path=artifact_path, kind="file", content_root=self.tmpdir
+        )
+        self.assertTrue(rec["content_hash"].startswith("sha256:"))
+
+    def test_content_path_outside_root_is_rejected(self):
+        outside_dir = tempfile.mkdtemp()
+        try:
+            outside_file = os.path.join(outside_dir, "secret.txt")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("outside content")
+            with self.assertRaises(ValueError):
+                Ledger(self.ledger_path).add(
+                    content_path=outside_file, kind="file", content_root=self.tmpdir
+                )
+        finally:
+            import shutil
+
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
+    def test_no_content_root_preserves_previous_unrestricted_behavior(self):
+        outside_dir = tempfile.mkdtemp()
+        try:
+            outside_file = os.path.join(outside_dir, "secret.txt")
+            with open(outside_file, "w", encoding="utf-8") as f:
+                f.write("outside content")
+            rec = Ledger(self.ledger_path).add(content_path=outside_file, kind="file")
+            self.assertTrue(rec["content_hash"].startswith("sha256:"))
+        finally:
+            import shutil
+
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
+
+class TestAddSingleRead(TempLedgerTestCase):
+    def test_add_reads_ledger_once(self):
+        """`add` must read the ledger file only once (via `verify`'s own
+        pass), not walk it again afterwards to find the last record."""
+        import builtins
+        from unittest import mock
+
+        ledger = Ledger(self.ledger_path)
+        ledger.add(source_url="https://example.com/0")
+
+        real_open = builtins.open
+        abs_ledger_path = os.path.abspath(self.ledger_path)
+        read_opens = []
+
+        def spy_open(file, mode="r", *args, **kwargs):
+            if (
+                isinstance(file, str)
+                and os.path.abspath(file) == abs_ledger_path
+                and "r" in mode
+            ):
+                read_opens.append(mode)
+            return real_open(file, mode, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=spy_open):
+            ledger.add(source_url="https://example.com/1")
+
+        self.assertEqual(
+            len(read_opens), 1,
+            f"expected exactly one read of the ledger file, got {read_opens!r}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

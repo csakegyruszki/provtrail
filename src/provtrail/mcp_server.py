@@ -114,6 +114,7 @@ def provtrail_add(
 
     effective_session_id = session_id or os.environ.get("CLAUDE_CODE_SESSION_ID") or None
 
+    ledger_dir_for_root = os.path.realpath(os.path.dirname(os.path.abspath(ledger_path)))
     try:
         record = Ledger(ledger_path).add(
             source_url=source_url or None,
@@ -128,6 +129,7 @@ def provtrail_add(
             archived_url=archived_url or None,
             path=artifact_rel_path,
             session_id=effective_session_id,
+            content_root=ledger_dir_for_root if resolved_content_path else None,
         )
         return {"ok": True, "record": record}
     except (ContractError, ValueError, LedgerError) as e:

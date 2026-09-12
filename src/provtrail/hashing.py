@@ -13,16 +13,25 @@ import json
 from typing import Any, Mapping
 
 SHA256_PREFIX = "sha256:"
+_HEX_DIGITS = frozenset("0123456789abcdef")
 
 
 def canonical_json_bytes(obj: Mapping[str, Any]) -> bytes:
     """Return the canonical JSON byte encoding used for hashing.
 
     Canonical JSON = ``json.dumps(obj, sort_keys=True,
-    separators=(",", ":"), ensure_ascii=False)`` encoded as UTF-8.
+    separators=(",", ":"), ensure_ascii=False, allow_nan=False)`` encoded
+    as UTF-8. ``allow_nan=False`` makes ``NaN``, ``Infinity`` and
+    ``-Infinity`` anywhere in ``obj`` (including nested values, such as
+    inside ``extra``) raise ``ValueError`` instead of being silently
+    serialized as invalid JSON tokens.
     """
     return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        obj,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -59,7 +68,12 @@ def sha256_of_file(path: str, chunk_size: int = 1024 * 1024) -> str:
 
 
 def is_valid_content_hash(value: Any) -> bool:
-    """Check whether ``value`` is a well-formed ``sha256:<64 hex>`` string."""
+    """Check whether ``value`` is a well-formed ``sha256:<64 hex>`` string.
+
+    Only lower-case hex digits are accepted. ``int(digest, 16)`` alone
+    would also accept upper-case hex (and a leading ``+``/``-``/``0x``),
+    so the digest is checked character-by-character instead.
+    """
     if not isinstance(value, str):
         return False
     if not value.startswith(SHA256_PREFIX):
@@ -67,11 +81,7 @@ def is_valid_content_hash(value: Any) -> bool:
     digest = value[len(SHA256_PREFIX):]
     if len(digest) != 64:
         return False
-    try:
-        int(digest, 16)
-    except ValueError:
-        return False
-    return True
+    return all(c in _HEX_DIGITS for c in digest)
 
 
 def record_hash(record: Mapping[str, Any]) -> str:

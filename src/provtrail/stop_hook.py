@@ -9,7 +9,7 @@ Reads the Stop-hook JSON payload from stdin (``session_id``,
 optionally enforces, whether the project's provtrail ledger has a
 record captured during this session.
 
-Session scoping:
+Session scoping (``scope: "session"``, the default):
     When the payload includes ``session_id``, only ledger records whose
     own ``session_id`` field matches count, and the window closes 300
     seconds after the hook runs (so a record from a later, unrelated
@@ -25,13 +25,46 @@ Session scoping:
     scoped to this session at all: the state is ``UNKNOWN`` rather than
     treating an unrelated old record as ``PRESENT``.
 
-Configuration is resolved by ``provtrail.config.resolve_config``, shared
-with the MCP server:
+Turn scoping (``scope: "turn"``):
+    The window opens at the ``timestamp`` of the LAST transcript entry
+    that is a human prompt, rather than at the transcript's first
+    timestamp. This narrows "was something captured" from the whole
+    session down to the turn that is ending. A human prompt is an entry
+    with ``type == "user"``, ``isMeta`` not ``True``, ``isSidechain`` not
+    ``True``, and ``message.content`` that is either a plain string or a
+    list containing no ``tool_result`` block. Stop-hook feedback entries
+    (``isMeta: true``, injected by a previous Stop hook run) and tool
+    result entries both also have ``type == "user"`` in the transcript,
+    so they are excluded explicitly rather than by accident.
+
+    If no qualifying entry exists, or the transcript is unreadable or
+    missing, the result is ``UNKNOWN``. Turn scope never falls back to
+    session scope's "first timestamp in the transcript" behaviour -- an
+    ambiguous turn boundary must not silently widen into the whole
+    session.
+
+    The existing ``session_id`` filter and the existing 300-second
+    future bound on timestamps still apply on top of the turn window.
+
+    Measured basis (not asserted as a documented Claude Code contract):
+    observed in two Claude Code 2.1.269 ``claude -p`` transcripts, a
+    human prompt is a ``message.content`` plain string with no
+    ``isMeta``; a tool result is a ``message.content`` list containing a
+    ``tool_result`` block, plus a top-level ``toolUseResult`` field on
+    the same entry; Stop-hook feedback is a ``message.content`` string
+    with ``isMeta: true``. This transcript format is undocumented
+    upstream and may change without notice.
+
+Configuration is resolved by ``provtrail.config.resolve_config`` and
+``provtrail.config.resolve_scope``, shared with the MCP server:
     - ledger path: ``PROVTRAIL_LEDGER`` env var, else the ``"ledger"``
       field of ``<cwd>/.provtrail.json``.
     - mode: ``PROVTRAIL_MODE`` env var, else legacy ``PROVTRAIL_ENFORCE=1``,
       else the config file's ``"mode"`` field, else legacy
       ``"enforce": true``, else ``"report"``.
+    - scope: ``PROVTRAIL_SCOPE`` env var, else the config file's
+      ``"scope"`` field, else ``"session"``. Mirrors the mode precedence
+      chain (minus the legacy aliases, which scope has none of).
 
 If no ledger is configured, the project has not opted in: exit 0, no
 output.
@@ -75,6 +108,11 @@ def _import_config():
     return resolve_config, MODE_REPORT, MODE_ENFORCE, MODE_STRICT
 
 
+def _import_scope_config():
+    from .config import SCOPE_SESSION, SCOPE_TURN, resolve_scope
+    return resolve_scope, SCOPE_SESSION, SCOPE_TURN
+
+
 def _find_since(transcript_path):
     """Return (first_timestamp_or_None, transcript_readable_bool)."""
     if not transcript_path or not os.path.isfile(transcript_path):
@@ -92,6 +130,70 @@ def _find_since(transcript_path):
                 if isinstance(obj, dict) and obj.get("timestamp"):
                     return obj["timestamp"], True
         return None, True
+    except OSError:
+        return None, False
+
+
+def _is_tool_result_content(content) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
+def _is_human_prompt_entry(obj) -> bool:
+    """Return True iff ``obj`` is a transcript entry that opens a turn.
+
+    See the module docstring's "Turn scoping" section for the exact,
+    measured definition and its two deliberate exclusions: Stop-hook
+    feedback (``isMeta: true``) and tool-result entries, both of which
+    also have ``type == "user"`` in the transcript.
+    """
+    if not isinstance(obj, dict):
+        return False
+    if obj.get("type") != "user":
+        return False
+    if obj.get("isMeta") is True:
+        return False
+    if obj.get("isSidechain") is True:
+        return False
+    message = obj.get("message")
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return not _is_tool_result_content(content)
+    return False
+
+
+def _find_turn_since(transcript_path):
+    """Return (last_human_prompt_timestamp_or_None, transcript_readable_bool).
+
+    Unlike ``_find_since``, this scans the whole transcript and keeps the
+    LAST qualifying entry's timestamp, not the first: the turn window
+    opens where the current turn's human prompt was sent, which is the
+    most recent one when the Stop hook runs.
+    """
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return None, False
+    last_ts = None
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if _is_human_prompt_entry(obj) and obj.get("timestamp"):
+                    last_ts = obj["timestamp"]
+        return last_ts, True
     except OSError:
         return None, False
 
@@ -118,15 +220,33 @@ def run(payload: dict) -> int:
         if not ledger_path:
             return 0
 
+        resolve_scope, SCOPE_SESSION, SCOPE_TURN = _import_scope_config()
+        scope = resolve_scope(cwd)
+
         Ledger, STATE_MISSING, STATE_PRESENT, STATE_UNKNOWN = _import_provtrail()
 
-        transcript_ts, transcript_readable = _find_since(transcript_path)
-        no_session_scope = not session_id and transcript_ts is None
+        if scope == SCOPE_TURN:
+            transcript_ts, transcript_readable = _find_turn_since(transcript_path)
+            no_session_scope = transcript_ts is None
+        else:
+            transcript_ts, transcript_readable = _find_since(transcript_path)
+            no_session_scope = not session_id and transcript_ts is None
         ledger_dir = os.path.dirname(os.path.abspath(ledger_path))
 
         if no_session_scope:
             state = STATE_UNKNOWN
-            if not transcript_readable:
+            if scope == SCOPE_TURN:
+                if not transcript_readable:
+                    reason = (
+                        "transcript was missing or unreadable, so the turn-scoped "
+                        "check could not find its window"
+                    )
+                else:
+                    reason = (
+                        "transcript has no qualifying human-prompt entry, so the "
+                        "turn-scoped check could not find its window"
+                    )
+            elif not transcript_readable:
                 reason = (
                     "transcript was missing or unreadable, and the payload had "
                     "no session_id to scope the check to"

@@ -2,8 +2,9 @@
 
 Usage:
     provtrail add LEDGER (--url U | --content-file F | --content-text S) ...
-    provtrail verify LEDGER [--check-files] [--json]
+    provtrail verify LEDGER [--check-files] [--expect SEQ:HASH ...] [--expect-file FILE] [--json]
     provtrail check LEDGER [--since ISO] [--until ISO] [--session-id ID] [--enforce] [--json]
+    provtrail head LEDGER [--json]
 """
 
 from __future__ import annotations
@@ -11,8 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .ledger import (
     STATE_MISSING,
@@ -23,6 +25,8 @@ from .ledger import (
     LockTimeout,
     VerifyReport,
 )
+
+_EXPECT_RE = re.compile(r"^(\d+):(sha256:[0-9a-f]{64})$")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -63,7 +67,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "--check-files", action="store_true",
         help="also re-hash referenced artifact files and compare",
     )
+    verify_p.add_argument(
+        "--expect", action="append", default=[], metavar="SEQ:HASH",
+        help="require a record at SEQ with this record_hash (repeatable)",
+    )
+    verify_p.add_argument(
+        "--expect-file", default=None, metavar="FILE",
+        help="file with one SEQ:HASH anchor per line (blank lines and "
+        "lines starting with '#' are ignored)",
+    )
     verify_p.add_argument("--json", action="store_true", help="print JSON output")
+
+    head_p = sub.add_parser("head", help="print the seq:record_hash of the last record")
+    head_p.add_argument("ledger", help="path to the ledger JSONL file")
+    head_p.add_argument("--json", action="store_true", help="print JSON output")
 
     check_p = sub.add_parser("check", help="report whether a source was captured")
     check_p.add_argument("ledger", help="path to the ledger JSONL file")
@@ -117,6 +134,43 @@ def _cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+class _UsageError(ValueError):
+    """A malformed CLI argument that must exit 2, not 1."""
+
+
+def _parse_expect_spec(spec: str) -> Tuple[int, str]:
+    m = _EXPECT_RE.match(spec.strip())
+    if not m:
+        raise _UsageError(
+            f"invalid --expect value {spec!r}; expected SEQ:sha256:<64 hex>"
+        )
+    return int(m.group(1)), m.group(2)
+
+
+def _load_expect_file(path: str) -> List[Tuple[int, str]]:
+    expectations: List[Tuple[int, str]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line_no, raw_line in enumerate(f, start=1):
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    expectations.append(_parse_expect_spec(line))
+                except _UsageError as e:
+                    raise _UsageError(f"{path}:{line_no}: {e}") from e
+    except OSError as e:
+        raise _UsageError(f"could not read --expect-file {path!r}: {e}") from e
+    return expectations
+
+
+def _collect_expectations(args: argparse.Namespace) -> List[Tuple[int, str]]:
+    expectations = [_parse_expect_spec(spec) for spec in args.expect]
+    if args.expect_file:
+        expectations.extend(_load_expect_file(args.expect_file))
+    return expectations
+
+
 def _print_verify_report(report: VerifyReport, as_json: bool) -> None:
     if as_json:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
@@ -133,9 +187,15 @@ def _print_verify_report(report: VerifyReport, as_json: bool) -> None:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    try:
+        expectations = _collect_expectations(args)
+    except _UsageError as e:
+        print(f"provtrail verify: {e}", file=sys.stderr)
+        return 2
+
     ledger = Ledger(args.ledger)
     try:
-        report = ledger.verify(check_files=args.check_files)
+        report = ledger.verify(check_files=args.check_files, expect=expectations)
     except LedgerError as e:
         if args.json:
             print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
@@ -144,6 +204,34 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         return 1
     _print_verify_report(report, args.json)
     return 0 if report.ok else 1
+
+
+def _cmd_head(args: argparse.Namespace) -> int:
+    ledger = Ledger(args.ledger)
+    try:
+        report = ledger.verify()
+    except LedgerError as e:
+        print(f"provtrail head: {e}", file=sys.stderr)
+        return 1
+    if not report.ok:
+        print(
+            f"provtrail head: ledger failed verification "
+            f"({len(report.violations)} violation(s))",
+            file=sys.stderr,
+        )
+        return 1
+
+    head = ledger.head()
+    if head is None:
+        print("provtrail head: ledger has no records", file=sys.stderr)
+        return 1
+
+    seq, record_hash = head
+    if args.json:
+        print(json.dumps({"seq": seq, "record_hash": record_hash}, ensure_ascii=False))
+    else:
+        print(f"{seq}:{record_hash}")
+    return 0
 
 
 def _print_check_result(result: CheckResult, as_json: bool) -> None:
@@ -172,6 +260,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_verify(args)
     if args.command == "check":
         return _cmd_check(args)
+    if args.command == "head":
+        return _cmd_head(args)
 
     parser.print_help(sys.stderr)
     return 1

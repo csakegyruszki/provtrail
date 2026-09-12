@@ -14,10 +14,13 @@ from provtrail.config import (  # noqa: E402
     MODE_ENFORCE,
     MODE_REPORT,
     MODE_STRICT,
+    SCOPE_SESSION,
+    SCOPE_TURN,
     resolve_config,
+    resolve_scope,
 )
 
-_ENV_KEYS = ("PROVTRAIL_LEDGER", "PROVTRAIL_MODE", "PROVTRAIL_ENFORCE")
+_ENV_KEYS = ("PROVTRAIL_LEDGER", "PROVTRAIL_MODE", "PROVTRAIL_ENFORCE", "PROVTRAIL_SCOPE")
 
 
 class ConfigTestCase(unittest.TestCase):
@@ -120,6 +123,37 @@ class TestModeResolution(ConfigTestCase):
             f.write("{not json")
         with self.assertRaises(ValueError):
             resolve_config(self.cwd)
+
+
+class TestScopeResolution(ConfigTestCase):
+    def test_default_is_session(self):
+        self.assertEqual(resolve_scope(self.cwd), SCOPE_SESSION)
+
+    def test_config_scope_field(self):
+        self.write_config({"scope": "turn"})
+        self.assertEqual(resolve_scope(self.cwd), SCOPE_TURN)
+
+    def test_env_scope_overrides_config_scope(self):
+        self.write_config({"scope": "turn"})
+        os.environ["PROVTRAIL_SCOPE"] = "session"
+        self.assertEqual(resolve_scope(self.cwd), SCOPE_SESSION)
+
+    def test_invalid_env_scope_raises(self):
+        os.environ["PROVTRAIL_SCOPE"] = "bogus"
+        with self.assertRaises(ValueError):
+            resolve_scope(self.cwd)
+
+    def test_invalid_config_scope_raises(self):
+        self.write_config({"scope": "bogus"})
+        with self.assertRaises(ValueError):
+            resolve_scope(self.cwd)
+
+    def test_scope_resolution_independent_of_mode(self):
+        self.write_config({"mode": "strict", "scope": "turn"})
+        _ledger_path, mode = resolve_config(self.cwd)
+        scope = resolve_scope(self.cwd)
+        self.assertEqual(mode, MODE_STRICT)
+        self.assertEqual(scope, SCOPE_TURN)
 
 
 if __name__ == "__main__":

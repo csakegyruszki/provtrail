@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "provtrail"
-version = "0.1.2"
-description = "Append-only, hash-chained ledger for recording the sources used in LLM-assisted research."
+version = "0.2.0"
+description = "Source provenance ledger for LLM-assisted research."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

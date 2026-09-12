@@ -1,0 +1,129 @@
+{
+  "valid_record": {
+    "schema": "provtrail/v1",
+    "seq": 1,
+    "captured_at": "2026-09-12T12:00:00Z",
+    "kind": "url",
+    "source_url": "https://example.test/source",
+    "prev_hash": null,
+    "record_hash": "sha256:29e6ba343f084f777245699ab0f0fad93b5728fec630a75abfd5cd80891e2888",
+    "id": "ev_29e6ba343f084f77"
+  },
+  "invalid_records": [
+    {
+      "name": "missing_kind",
+      "expected_code": "INVALID_KIND",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "record_hash": "sha256:8f5bdccc7181daaedcdb67557c48c88b82a397236c5ef0c119719b48d17d3529",
+        "id": "ev_8f5bdccc7181daae"
+      }
+    },
+    {
+      "name": "unknown_kind",
+      "expected_code": "INVALID_KIND",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "podcast",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "record_hash": "sha256:5830fa402cfbb86692fd7d6032359d36462677ec6b37785fe28d5f98110f12e7",
+        "id": "ev_5830fa402cfbb866"
+      }
+    },
+    {
+      "name": "unknown_field",
+      "expected_code": "UNKNOWN_FIELD",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "foo": "bar",
+        "record_hash": "sha256:72d9d34b706c18e5042a3c4ffcde22305ca20d46287fec5b173705b7e68be3ac",
+        "id": "ev_72d9d34b706c18e5"
+      }
+    },
+    {
+      "name": "uppercase_content_hash",
+      "expected_code": "INVALID_CONTENT_HASH",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "content_hash": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "record_hash": "sha256:24df5749055a0d7e77d4f0a531d6956bc6ba3fe7225279f663e3fb89ffe6ee22",
+        "id": "ev_24df5749055a0d7e"
+      }
+    },
+    {
+      "name": "integer_title",
+      "expected_code": "INVALID_FIELD_TYPE",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "title": 123,
+        "record_hash": "sha256:f31eb98ed84b7ad1c69659eb22ea6d1e9b06ddd16fb17fe9070587a521cfb215",
+        "id": "ev_f31eb98ed84b7ad1"
+      }
+    },
+    {
+      "name": "non_object_extra",
+      "expected_code": "INVALID_FIELD_TYPE",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "extra": "not-an-object",
+        "record_hash": "sha256:d454d1f4f434bb0a2205f382af17c738b4038c897ce7d34c427bfb060363b2de",
+        "id": "ev_d454d1f4f434bb0a"
+      }
+    },
+    {
+      "name": "boolean_seq",
+      "expected_code": "INVALID_FIELD_TYPE",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": true,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": null,
+        "record_hash": "sha256:414980acf7bbd823b5faa7a62423955107d474fb6e35ba548f0d8596d73d4684",
+        "id": "ev_414980acf7bbd823"
+      }
+    },
+    {
+      "name": "malformed_prev_hash",
+      "expected_code": "INVALID_FIELD_TYPE",
+      "record": {
+        "schema": "provtrail/v1",
+        "seq": 1,
+        "captured_at": "2026-09-12T12:00:00Z",
+        "kind": "url",
+        "source_url": "https://example.test/source",
+        "prev_hash": "not-a-hash",
+        "record_hash": "sha256:d8acf39bcf634853440d1675c3c3eb211801bde989a50954472988ab20c0c446",
+        "id": "ev_d8acf39bcf634853"
+      }
+    }
+  ]
+}

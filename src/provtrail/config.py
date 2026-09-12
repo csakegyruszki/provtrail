@@ -16,6 +16,10 @@ MODE_ENFORCE = "enforce"
 MODE_STRICT = "strict"
 VALID_MODES = (MODE_REPORT, MODE_ENFORCE, MODE_STRICT)
 
+SCOPE_SESSION = "session"
+SCOPE_TURN = "turn"
+VALID_SCOPES = (SCOPE_SESSION, SCOPE_TURN)
+
 CONFIG_FILENAME = ".provtrail.json"
 
 
@@ -54,6 +58,38 @@ def _resolve_mode(cfg: Dict[str, Any]) -> str:
         return MODE_ENFORCE
 
     return MODE_REPORT
+
+
+def _validate_scope(value: Any) -> str:
+    if value not in VALID_SCOPES:
+        raise ValueError(
+            f"invalid provtrail scope {value!r}; must be one of {list(VALID_SCOPES)}"
+        )
+    return value
+
+
+def resolve_scope(cwd: str) -> str:
+    """Resolve the Stop hook's turn-window scope for the project at ``cwd``.
+
+    Mirrors the precedence chain used for ``mode`` in ``_resolve_mode``:
+        1. ``PROVTRAIL_SCOPE`` environment variable.
+        2. the config file's ``"scope"`` field.
+        3. default: "session".
+
+    Raises ``ValueError`` if the config file is not valid JSON, or if an
+    explicit scope value (env or config) is not one of "session", "turn".
+    """
+    cfg = _load_config_file(cwd)
+
+    env_scope = os.environ.get("PROVTRAIL_SCOPE")
+    if env_scope:
+        return _validate_scope(env_scope)
+
+    cfg_scope = cfg.get("scope")
+    if cfg_scope:
+        return _validate_scope(cfg_scope)
+
+    return SCOPE_SESSION
 
 
 def resolve_config(cwd: str) -> Tuple[Optional[str], str]:

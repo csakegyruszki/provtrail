@@ -14,9 +14,10 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 from .hashing import (
+    canonical_json_bytes,
     is_valid_content_hash,
     sha256_of_bytes,
     sha256_of_file,
@@ -27,6 +28,128 @@ from .hashing import (
 SCHEMA_ID = "provtrail/v1"
 ALLOWED_KINDS = {"url", "search", "scrape", "file", "manual"}
 LOCK_SUFFIX = ".lock"
+
+# Every field name defined in schema/provtrail-record.v1.json's
+# "properties". Kept as a plain constant (rather than read from the
+# schema file at import time) because the schema lives outside the
+# installed package (see MANIFEST.in); this set must be kept in sync by
+# hand whenever the schema gains or loses a top-level field.
+FIELD_NAMES = frozenset(
+    {
+        "schema",
+        "seq",
+        "id",
+        "captured_at",
+        "source_url",
+        "content_hash",
+        "kind",
+        "tool",
+        "query",
+        "title",
+        "claim",
+        "snippet",
+        "archived_url",
+        "path",
+        "session_id",
+        "extra",
+        "prev_hash",
+        "record_hash",
+    }
+)
+
+# Fields that, when present, must be strings. `schema`, `kind`,
+# `captured_at`, `content_hash`, `id`, `record_hash` and `seq` have their
+# own dedicated checks (WRONG_SCHEMA, INVALID_KIND,
+# MISSING/INVALID_CAPTURED_AT, INVALID_CONTENT_HASH, ID_MISMATCH,
+# HASH_MISMATCH) and are not covered here to avoid duplicate violations.
+_STRING_FIELDS = (
+    "tool",
+    "query",
+    "title",
+    "claim",
+    "snippet",
+    "archived_url",
+    "path",
+    "session_id",
+    "source_url",
+)
+
+
+def _validate_record_fields(rec: Mapping[str, Any]) -> List[Dict[str, str]]:
+    """Structural, per-record field checks shared by ``add`` and ``verify``.
+
+    This is the ONE place both `Ledger.add` (before writing) and
+    `Ledger.verify` (while reading) check field names and field types, so
+    the two can never silently drift apart. It only reports the two
+    structural codes ``UNKNOWN_FIELD`` and ``INVALID_FIELD_TYPE``; codes
+    that depend on chain state (``BAD_SEQ``, ``CHAIN_BROKEN``, ...) or
+    that already have a dedicated, more specific check (``INVALID_KIND``,
+    ``INVALID_CONTENT_HASH``, ...) are left where they already are.
+
+    Returns a list of ``{"code": ..., "message": ...}`` dicts, empty if
+    the record has no structural violations.
+    """
+    violations: List[Dict[str, str]] = []
+
+    for key in rec:
+        if key not in FIELD_NAMES:
+            violations.append(
+                {
+                    "code": "UNKNOWN_FIELD",
+                    "message": f"unknown field: {key!r}",
+                }
+            )
+
+    if "seq" in rec:
+        seq_val = rec["seq"]
+        if isinstance(seq_val, bool) or not isinstance(seq_val, int) or seq_val < 1:
+            violations.append(
+                {
+                    "code": "INVALID_FIELD_TYPE",
+                    "message": f"seq must be an integer >= 1, got {seq_val!r}",
+                }
+            )
+
+    for field_name in _STRING_FIELDS:
+        if field_name in rec and not isinstance(rec[field_name], str):
+            violations.append(
+                {
+                    "code": "INVALID_FIELD_TYPE",
+                    "message": f"{field_name} must be a string, got {rec[field_name]!r}",
+                }
+            )
+
+    if "extra" in rec and not isinstance(rec["extra"], dict):
+        violations.append(
+            {
+                "code": "INVALID_FIELD_TYPE",
+                "message": f"extra must be an object, got {rec['extra']!r}",
+            }
+        )
+
+    if "prev_hash" in rec:
+        prev_hash_val = rec["prev_hash"]
+        if prev_hash_val is not None and not is_valid_content_hash(prev_hash_val):
+            violations.append(
+                {
+                    "code": "INVALID_FIELD_TYPE",
+                    "message": (
+                        "prev_hash must be null or sha256:<64 lower-hex>, got "
+                        f"{prev_hash_val!r}"
+                    ),
+                }
+            )
+
+    return violations
+
+
+def _reject_json_constant(name: str) -> None:
+    # json.loads calls this for the tokens NaN / Infinity / -Infinity
+    # instead of returning a float, when they are not wanted in ledger
+    # data (see Ledger.verify below). Raising here turns them into the
+    # same "this line is not valid JSON" outcome as any other malformed
+    # line, reported as INVALID_JSON.
+    raise ValueError(f"disallowed JSON constant: {name}")
 
 STATE_PRESENT = "PRESENT"
 STATE_MISSING = "MISSING"
@@ -125,6 +248,12 @@ class VerifyReport:
     ok: bool
     violations: List[Dict[str, Any]] = field(default_factory=list)
     record_count: int = 0
+    # The last record read from the file (raw, as parsed from its JSON
+    # line), or None for an empty/absent ledger. Not part of the public
+    # JSON output (see to_dict); it exists so that `Ledger.add` can reuse
+    # the single pass `verify` already makes over the file instead of
+    # scanning it a second time to find the last record.
+    last_record: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -210,8 +339,8 @@ class Ledger:
                 if not line.strip():
                     continue
                 try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError as e:
+                    obj = json.loads(line, parse_constant=_reject_json_constant)
+                except (json.JSONDecodeError, ValueError) as e:
                     raise LedgerError(f"malformed JSON at line {line_no}: {e}") from e
                 yield obj
 
@@ -220,6 +349,19 @@ class Ledger:
         for rec in self.records():
             last = rec
         return last
+
+    def head(self) -> Optional[Tuple[int, str]]:
+        """Return ``(seq, record_hash)`` of the last record, or ``None``.
+
+        This reads the last record's own ``seq`` and ``record_hash``
+        fields as stored; it does not itself verify the ledger. Callers
+        that need the anchor to be trustworthy should call :meth:`verify`
+        first (as the ``provtrail head`` command does).
+        """
+        last = self._last_record()
+        if last is None:
+            return None
+        return last.get("seq"), last.get("record_hash")
 
     # ------------------------------------------------------------------
     # Writing
@@ -243,12 +385,27 @@ class Ledger:
         extra: Optional[Dict[str, Any]] = None,
         captured_at: Optional[str] = None,
         lock_timeout: float = 10.0,
+        content_root: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Append one record to the ledger and return it as a dict.
 
         Raises ``ContractError`` if the resulting record would violate
         the provtrail contract, and ``LockTimeout`` if the append lock
         cannot be acquired within ``lock_timeout`` seconds.
+
+        ``content_root``, when given together with ``content_path``,
+        requires the realpath of ``content_path`` to resolve inside
+        ``content_root`` (following symlinks); otherwise ``ValueError``
+        is raised and nothing is written. The default ``None`` preserves
+        the previous behaviour of hashing any readable ``content_path``.
+        This is a path-containment check, not a security sandbox. It
+        resolves ``content_path`` once, at check time; it does not stop
+        a file that is replaced by a symlink pointing outside
+        ``content_root`` between the check and the read (a
+        time-of-check/time-of-use race), and it does not defend against
+        hardlinks or other filesystem-level aliasing. Treat it as a
+        guard against accidental misuse, not against an adversarial
+        filesystem.
         """
         if content is not None and content_path is not None:
             raise ValueError("provide at most one of 'content' or 'content_path'")
@@ -270,6 +427,10 @@ class Ledger:
             else:
                 content_hash = sha256_of_text(str(content))
         elif content_path is not None:
+            if content_root is not None and not _resolves_inside(content_root, content_path):
+                raise ValueError(
+                    f"content_path must resolve inside content_root: {content_path!r}"
+                )
             content_hash = sha256_of_file(content_path)
 
         has_url = isinstance(source_url, str) and source_url != ""
@@ -291,6 +452,58 @@ class Ledger:
                     f"{captured_at!r}"
                 ) from e
 
+        optional_fields = {
+            "tool": tool,
+            "query": query,
+            "title": title,
+            "claim": claim,
+            "snippet": snippet,
+            "archived_url": archived_url,
+            "path": path,
+            "session_id": session_id,
+            "extra": extra,
+        }
+
+        # Validate the fields the caller controls (everything except
+        # `seq` and `prev_hash`, which this method derives itself and
+        # which are therefore always well-formed) with the same
+        # `_validate_record_fields` that `verify` uses on every record
+        # read back from disk. This runs before the lock is acquired and
+        # before the ledger file is opened for writing, so a badly typed
+        # field never touches the ledger.
+        prevalidation: Dict[str, Any] = {
+            "schema": SCHEMA_ID,
+            "captured_at": captured_at,
+            "kind": kind,
+        }
+        if has_url:
+            prevalidation["source_url"] = source_url
+        if has_hash:
+            prevalidation["content_hash"] = content_hash
+        for key, value in optional_fields.items():
+            if value is not None:
+                prevalidation[key] = value
+
+        field_violations = _validate_record_fields(prevalidation)
+        if field_violations:
+            summary = "; ".join(
+                f"{v['code']}: {v['message']}" for v in field_violations
+            )
+            raise ValueError(f"record would fail validation: {summary}")
+
+        # NaN/Infinity/-Infinity anywhere in the record (including nested
+        # inside `extra`) are rejected outright: they are not valid JSON
+        # tokens, so a record containing one could never be read back
+        # without a lenient (non-standard) JSON parser. This uses the
+        # same `allow_nan=False` canonical encoding `record_hash` would
+        # otherwise fail on, just before the lock is taken instead of
+        # after, so nothing about this add touches the ledger or its lock
+        # file.
+        try:
+            canonical_json_bytes(prevalidation)
+        except ValueError as e:
+            raise ValueError(f"record contains a non-finite float: {e}") from e
+
         lock_path = self._acquire_lock(timeout=lock_timeout)
         try:
             report = self.verify()
@@ -298,7 +511,10 @@ class Ledger:
                 raise LedgerError(
                     f"ledger failed verification ({len(report.violations)} violation(s))"
                 )
-            last = self._last_record()
+            # `verify` above already walked the whole file once and kept
+            # track of the last record it saw; reuse that instead of a
+            # second full scan via `_last_record()`.
+            last = report.last_record
             seq = (last["seq"] + 1) if last else 1
             prev_hash = last["record_hash"] if last else None
 
@@ -312,22 +528,9 @@ class Ledger:
                 body["source_url"] = source_url
             if has_hash:
                 body["content_hash"] = content_hash
-
-            optional_fields = {
-                "tool": tool,
-                "query": query,
-                "title": title,
-                "claim": claim,
-                "snippet": snippet,
-                "archived_url": archived_url,
-                "path": path,
-                "session_id": session_id,
-                "extra": extra,
-            }
             for key, value in optional_fields.items():
                 if value is not None:
                     body[key] = value
-
             body["prev_hash"] = prev_hash
 
             rh = compute_record_hash(body)
@@ -351,16 +554,43 @@ class Ledger:
     # Verification
     # ------------------------------------------------------------------
 
-    def verify(self, check_files: bool = False) -> VerifyReport:
+    def verify(
+        self,
+        check_files: bool = False,
+        expect: Iterable[Tuple[int, str]] = (),
+    ) -> VerifyReport:
+        """Verify the ledger and return a :class:`VerifyReport`.
+
+        ``expect`` is an iterable of ``(seq, record_hash)`` anchor pairs,
+        typically obtained earlier from :meth:`head` and stored outside
+        the ledger. Each anchor is checked against the record actually
+        found at that ``seq`` (using its recomputed, not merely stored,
+        hash): ``ANCHOR_MISSING`` if no record has that ``seq`` (for
+        example because the ledger was truncated), ``ANCHOR_MISMATCH``
+        if a record exists there but its hash differs.
+        """
         violations: List[Dict[str, Any]] = []
         count = 0
+        expect = list(expect)
 
         if not os.path.isfile(self.path):
-            return VerifyReport(ok=True, violations=[], record_count=0)
+            for exp_seq, exp_hash in expect:
+                violations.append(
+                    {
+                        "seq_or_line": exp_seq,
+                        "code": "ANCHOR_MISSING",
+                        "message": f"no record at seq {exp_seq!r}: ledger has no records",
+                    }
+                )
+            return VerifyReport(
+                ok=(len(violations) == 0), violations=violations, record_count=0
+            )
 
         running_expected_seq = 1
         running_prev_hash: Optional[str] = None
         ledger_dir = os.path.dirname(os.path.abspath(self.path))
+        last_record: Optional[Dict[str, Any]] = None
+        seq_to_hash: Dict[Any, str] = {}
 
         with open(self.path, "rb") as f:
             for line_no, raw_bytes in enumerate(f, start=1):
@@ -380,8 +610,8 @@ class Ledger:
                     continue
 
                 try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError as e:
+                    rec = json.loads(line, parse_constant=_reject_json_constant)
+                except (json.JSONDecodeError, ValueError) as e:
                     violations.append(
                         {"seq_or_line": line_no, "code": "INVALID_JSON", "message": str(e)}
                     )
@@ -397,7 +627,11 @@ class Ledger:
                     continue
 
                 count += 1
+                last_record = rec
                 seq_or_line = rec.get("seq", line_no)
+
+                for field_violation in _validate_record_fields(rec):
+                    violations.append({"seq_or_line": seq_or_line, **field_violation})
 
                 if rec.get("schema") != SCHEMA_ID:
                     violations.append(
@@ -444,6 +678,29 @@ class Ledger:
                             "message": "neither source_url nor content_hash present",
                         }
                     )
+                if content_hash is not None and not has_hash:
+                    violations.append(
+                        {
+                            "seq_or_line": seq_or_line,
+                            "code": "INVALID_CONTENT_HASH",
+                            "message": (
+                                f"content_hash is not a well-formed sha256:<64 lower-case "
+                                f"hex> string: {content_hash!r}"
+                            ),
+                        }
+                    )
+
+                rec_kind = rec.get("kind")
+                if rec_kind not in ALLOWED_KINDS:
+                    violations.append(
+                        {
+                            "seq_or_line": seq_or_line,
+                            "code": "INVALID_KIND",
+                            "message": (
+                                f"kind must be one of {sorted(ALLOWED_KINDS)}, got {rec_kind!r}"
+                            ),
+                        }
+                    )
 
                 seq_val = rec.get("seq")
                 seq_is_integer = isinstance(seq_val, int) and not isinstance(seq_val, bool)
@@ -473,6 +730,8 @@ class Ledger:
 
                 stored_hash = rec.get("record_hash")
                 recomputed = compute_record_hash(rec)
+                if seq_is_integer:
+                    seq_to_hash[seq_val] = recomputed
                 if stored_hash != recomputed:
                     violations.append(
                         {
@@ -565,7 +824,34 @@ class Ledger:
                     stored_hash if isinstance(stored_hash, str) else running_prev_hash
                 )
 
-        return VerifyReport(ok=(len(violations) == 0), violations=violations, record_count=count)
+        for exp_seq, exp_hash in expect:
+            actual_hash = seq_to_hash.get(exp_seq)
+            if actual_hash is None:
+                violations.append(
+                    {
+                        "seq_or_line": exp_seq,
+                        "code": "ANCHOR_MISSING",
+                        "message": f"no record found at seq {exp_seq!r}",
+                    }
+                )
+            elif actual_hash != exp_hash:
+                violations.append(
+                    {
+                        "seq_or_line": exp_seq,
+                        "code": "ANCHOR_MISMATCH",
+                        "message": (
+                            f"record at seq {exp_seq!r} has hash {actual_hash!r}, "
+                            f"expected {exp_hash!r}"
+                        ),
+                    }
+                )
+
+        return VerifyReport(
+            ok=(len(violations) == 0),
+            violations=violations,
+            record_count=count,
+            last_record=last_record,
+        )
 
     # ------------------------------------------------------------------
     # Presence check

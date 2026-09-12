@@ -1,0 +1,95 @@
+[
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 1,
+      "captured_at": "2025-01-01T00:00:00Z",
+      "kind": "url",
+      "source_url": "https://example.com/ascii",
+      "prev_hash": null
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:00Z\",\"kind\":\"url\",\"prev_hash\":null,\"schema\":\"provtrail/v1\",\"seq\":1,\"source_url\":\"https://example.com/ascii\"}",
+    "record_hash": "sha256:03de77cbeb27aede20292bf3267a200ab8f1f4a9dd77ee13c0f7814c0c8a85ea"
+  },
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 2,
+      "captured_at": "2025-01-01T00:00:01Z",
+      "kind": "manual",
+      "source_url": "https://example.com/unicode",
+      "title": "Árvíztűrő tükörfúrógép — éves jelentés",
+      "snippet": "日本語テキスト",
+      "prev_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:01Z\",\"kind\":\"manual\",\"prev_hash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"schema\":\"provtrail/v1\",\"seq\":2,\"snippet\":\"日本語テキスト\",\"source_url\":\"https://example.com/unicode\",\"title\":\"Árvíztűrő tükörfúrógép — éves jelentés\"}",
+    "record_hash": "sha256:a7ad35d895264bf02f22a23b059beaf15f00e7c39c7f73c20b22e627948b1836"
+  },
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 3,
+      "captured_at": "2025-01-01T00:00:02Z",
+      "kind": "search",
+      "source_url": "https://example.com/nested",
+      "extra": {
+        "engine": "example",
+        "results": {
+          "count": 3,
+          "top": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      },
+      "prev_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:02Z\",\"extra\":{\"engine\":\"example\",\"results\":{\"count\":3,\"top\":[\"a\",\"b\",\"c\"]}},\"kind\":\"search\",\"prev_hash\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"schema\":\"provtrail/v1\",\"seq\":3,\"source_url\":\"https://example.com/nested\"}",
+    "record_hash": "sha256:fcfcdb745948d2a0cb29ba07ab452d52f0336a31c8ebe26f8b53f114fa861d1c"
+  },
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 4,
+      "captured_at": "2025-01-01T00:00:03Z",
+      "kind": "file",
+      "content_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "extra": {
+        "size_bytes": 4096,
+        "page_count": 12
+      },
+      "prev_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:03Z\",\"content_hash\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"extra\":{\"page_count\":12,\"size_bytes\":4096},\"kind\":\"file\",\"prev_hash\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\",\"schema\":\"provtrail/v1\",\"seq\":4}",
+    "record_hash": "sha256:2804abd38faf304f6b48cad7c4660df3d518e17bfb927c3c37f51f66dcee063c"
+  },
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 5,
+      "captured_at": "2025-01-01T00:00:04Z",
+      "kind": "scrape",
+      "source_url": "https://example.com/float",
+      "extra": {
+        "score": 0.875,
+        "ratio": -12.5
+      },
+      "prev_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:04Z\",\"extra\":{\"ratio\":-12.5,\"score\":0.875},\"kind\":\"scrape\",\"prev_hash\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"schema\":\"provtrail/v1\",\"seq\":5,\"source_url\":\"https://example.com/float\"}",
+    "record_hash": "sha256:d7906dcda2c3f16fdf84b7414cc6c6fa52f80a88732921d58529878b5eb2e15b"
+  },
+  {
+    "record": {
+      "schema": "provtrail/v1",
+      "seq": 1,
+      "captured_at": "2025-01-01T00:00:05Z",
+      "kind": "url",
+      "source_url": "https://example.com/first-record",
+      "prev_hash": null
+    },
+    "canonical": "{\"captured_at\":\"2025-01-01T00:00:05Z\",\"kind\":\"url\",\"prev_hash\":null,\"schema\":\"provtrail/v1\",\"seq\":1,\"source_url\":\"https://example.com/first-record\"}",
+    "record_hash": "sha256:fa9ba7953c48e22fbd774c03af372efcfd15e1fe0580751dac05e73161b10318"
+  }
+]
